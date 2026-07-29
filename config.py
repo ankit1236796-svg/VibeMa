@@ -1,9 +1,11 @@
 import os
 
-# Railway Dashboard > Variables se uthayega
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8271913562:AAGycnacKhwMTcCrzkAsZhudgb-PhIQwWr4")
-PLAYWRIGHT_SCRAPER_URL = os.getenv("https://loving-liberation-production-52a3.up.railway.app", "")
+# Tera Bot Token variables se aayega
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
-# Intervals
+# Scraper ka URL seedha hardcode kar diya, ab environment variable ki zaroorat hi nahi!
+PLAYWRIGHT_SCRAPER_URL = "https://loving-liberation-production-52a3.up.railway.app"
+
+# Checking Intervals
 CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", 180))
 STAGGER_INTERVAL_SECONDS = int(os.getenv("STAGGER_INTERVAL_SECONDS", 3))
