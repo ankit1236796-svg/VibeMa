@@ -1,6 +1,7 @@
 import httpx
 import asyncio
 import re
+import json
 import logging
 from bs4 import BeautifulSoup
 import config
@@ -12,21 +13,54 @@ _tier1_api_semaphore = asyncio.Semaphore(4)
 _playwright_fallback_semaphore = asyncio.Semaphore(2)
 
 async def _extract_sku(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+    }
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, headers=headers)
         soup = BeautifulSoup(resp.text, "html.parser")
-        m = re.search(r'"partNumber"\s*:\s*"([A-Z0-9]{5,14}/A)"', resp.text)
-        if m:
-            return m.group(1)
+        
+        sku = None
+        
+        # Method 1: JSON-LD Extraction (Sabse reliable)
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(script.string or "")
+                item = data[0] if isinstance(data, list) else data
+                sku = item.get("sku")
+                if not sku and "offers" in item:
+                    offers = item["offers"]
+                    if isinstance(offers, dict):
+                        sku = offers.get("sku")
+                    elif isinstance(offers, list) and len(offers) > 0:
+                        sku = offers[0].get("sku")
+                if sku: 
+                    break
+            except:
+                pass
+                
+        # Method 2: Regex Fallback (Agar JSON-LD fail ho jaye)
+        if not sku:
+            match = re.search(r'"partNumber"\s*:\s*"([A-Z0-9]{5,14}/[A-Z])"', resp.text)
+            if match:
+                sku = match.group(1)
+        
+        return sku
     except Exception as e:
         logger.error(f"Error extracting SKU for {url}: {e}")
-    return None
+        return None
 
 async def check_pickup_strictly(url, pincode):
     sku = await _extract_sku(url)
     if not sku:
         return {"status": "error", "message": "Product ka SKU nahi mila."}
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
 
     # --- TIER 1: FAST DIRECT HTTP API ---
     async with _tier1_api_semaphore:
@@ -34,7 +68,7 @@ async def check_pickup_strictly(url, pincode):
         try:
             target = f"https://www.apple.com/in/shop/retail/pickup-message?parts.0={sku}&location={pincode}"
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(target)
+                resp = await client.get(target, headers=headers)
             
             if resp.status_code == 200:
                 data = resp.json()
