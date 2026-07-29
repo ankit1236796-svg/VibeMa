@@ -1,80 +1,44 @@
-import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Router
 from aiogram.filters import Command
-from checkers.apple import AppleChecker
-from config import config
+from aiogram.types import Message
+from database import add_tracking, get_all_combos
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+router = Router()
 
-# Initialize bot
-bot = Bot(token=config.BOT_TOKEN)
-dp = Dispatcher()
+@router.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer("Hello! Send /add <URL> <PINCODE> to track Apple Pickup.")
 
-# Tracked products: {sku: [pincodes]}
-TRACKED_PRODUCTS = {
-    "MG6K4HN/A": ["110017", "400051", "201301"],  # iPhone 17 White
-    "MG6L4HN/A": ["110017", "400051"],            # iPhone 17 Mist Blue
-}
+@router.message(Command("add"))
+async def cmd_add(message: Message):
+    # Command expected: /add https://apple.com/... 110001
+    args = message.text.split()
+    if len(args) != 3:
+        await message.answer("Usage: /add <Apple URL> <Pincode>")
+        return
+    
+    url = args[1]
+    pincode = args[2]
+    user_id = message.from_user.id
 
-async def check_all_pickup():
-    """Check all tracked products and send alerts."""
-    async with AppleChecker() as checker:
-        tasks = []
-        for sku, pincodes in TRACKED_PRODUCTS.items():
-            for pincode in pincodes:
-                tasks.append(checker.check_pickup(sku, pincode))
+    success = add_tracking(user_id, url, pincode)
+    if success:
+        await message.answer(f"✅ Tracking added for Pincode: {pincode}")
+    else:
+        await message.answer("⚠️ This URL + Pincode combo is already being tracked.")
 
-        results = await asyncio.gather(*tasks)
-
-        for result in results:
-            if not result.success:
-                logger.warning(f"Check failed for {result.sku}/{result.pincode}: {result.error}")
-                continue
-
-            for store in result.availability:
-                if store.available:
-                    await send_alert(store)
-                    break  # Alert once per SKU/pincode
-
-async def send_alert(store: StoreAvailability):
-    """Send Telegram alert for available pickup."""
-    message = (
-        f"🚨 *STOCK ALERT!* 🚨\n\n"
-        f"📱 *Product:* iPhone 17 ({store.sku})\n"
-        f"📍 *Store:* {store.store_name} ({store.pincode})\n"
-        f"✅ *Status:* **IN STOCK** for pickup!\n"
-        f"🕒 *Time:* {store.last_checked.strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    await bot.send_message(config.CHAT_ID, message, parse_mode="Markdown")
-
-@dp.message(Command("start"))
-async def start_command(message: types.Message):
-    await message.answer("🤖 Apple Pickup Alert Bot is running! Use /check to manually check stock.")
-
-@dp.message(Command("check"))
-async def check_command(message: types.Message):
-    await message.answer("⏳ Checking stock...")
-    await check_all_pickup()
-    await message.answer("✅ Stock check completed!")
-
-@dp.message()
-async def echo(message: types.Message):
-    await message.answer("Use /start or /check")
-
-async def scheduler():
-    """Run checks every 3 minutes."""
-    while True:
-        await check_all_pickup()
-        await asyncio.sleep(180)  # 3 minutes
-
-async def main():
-    # Start scheduler
-    asyncio.create_task(scheduler())
-    # Start bot
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+@router.message(Command("list"))
+async def cmd_list(message: Message):
+    combos = get_all_combos()
+    user_combos = [c for c in combos if c["user_id"] == message.from_user.id]
+    
+    if not user_combos:
+        await message.answer("You are not tracking anything.")
+        return
+        
+    text = "📋 **Your Tracked Items:**\n"
+    for i, c in enumerate(user_combos, 1):
+        text += f"{i}. Pincode: {c['pincode']} | URL: {c['url']}\n"
+    
+    await message.answer(text)
