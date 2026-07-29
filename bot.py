@@ -1,44 +1,64 @@
-import logging
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
-from database import add_tracking, get_all_combos
+import database
 
 router = Router()
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    await message.answer("Hello! Send /add <URL> <PINCODE> to track Apple Pickup.")
+    await message.reply(
+        "Welcome bhai! Apple pickup track karne ke liye command use kar:\n"
+        "`/add <URL> <PINCODE>`"
+    )
 
 @router.message(Command("add"))
-async def cmd_add(message: Message):
-    # Command expected: /add https://apple.com/... 110001
-    args = message.text.split()
-    if len(args) != 3:
-        await message.answer("Usage: /add <Apple URL> <Pincode>")
+async def cmd_add(message: Message, command: CommandObject):
+    if not command.args:
+        await message.reply("❌ Format galat hai. Aise likh:\n`/add <URL> <PINCODE>`")
         return
     
-    url = args[1]
-    pincode = args[2]
-    user_id = message.from_user.id
-
-    success = add_tracking(user_id, url, pincode)
+    args = command.args.split()
+    if len(args) < 2:
+        await message.reply("❌ URL aur Pincode dono dena zaroori hai.")
+        return
+        
+    url, pincode = args[0], args[1]
+    success = database.add_tracking(message.from_user.id, url, pincode)
+    
     if success:
-        await message.answer(f"✅ Tracking added for Pincode: {pincode}")
+        await message.reply(f"✅ Tracking added for Pincode: {pincode}")
     else:
-        await message.answer("⚠️ This URL + Pincode combo is already being tracked.")
+        await message.reply("⚠️ Yeh item aur pincode tu already track kar raha hai.")
+
+@router.message(Command("remove"))
+async def cmd_remove(message: Message, command: CommandObject):
+    if not command.args:
+        await message.reply("❌ Format galat hai. Aise likh:\n`/remove <URL> <PINCODE>`")
+        return
+        
+    args = command.args.split()
+    if len(args) < 2:
+        await message.reply("❌ URL aur Pincode dono dena zaroori hai.")
+        return
+        
+    url, pincode = args[0], args[1]
+    success = database.remove_tracking(message.from_user.id, url, pincode)
+    
+    if success:
+        await message.reply(f"✅ Done! Pincode {pincode} ki tracking delete ho gayi hai.")
+    else:
+        await message.reply("❌ Yeh tracking list me nahi mili. URL aur Pincode theek se check kar.")
 
 @router.message(Command("list"))
 async def cmd_list(message: Message):
-    combos = get_all_combos()
-    user_combos = [c for c in combos if c["user_id"] == message.from_user.id]
-    
-    if not user_combos:
-        await message.answer("You are not tracking anything.")
+    items = database.get_user_tracking(message.from_user.id)
+    if not items:
+        await message.reply("Teri tracking list khali hai bhai.")
         return
         
-    text = "📋 **Your Tracked Items:**\n"
-    for i, c in enumerate(user_combos, 1):
-        text += f"{i}. Pincode: {c['pincode']} | URL: {c['url']}\n"
+    msg = "📋 **Teri Tracking List:**\n\n"
+    for url, pincode in items:
+        msg += f"📍 Pincode: {pincode}\n🔗 URL: {url}\n\n"
     
-    await message.answer(text)
+    await message.reply(msg, disable_web_page_preview=True)
