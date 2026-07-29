@@ -1,58 +1,97 @@
-import asyncio
 import httpx
-import random
+import re
+import json
 import logging
-from config import PLAYWRIGHT_SCRAPER_URL
+from bs4 import BeautifulSoup
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
-# Concurrency Limits
-_tier1_api_semaphore = asyncio.Semaphore(4)  # Max 4 concurrent fast API calls
-_tier2_playwright_semaphore = asyncio.Semaphore(2)  # Matches Playwright MAX_CONCURRENT_CHECKS
-
-async def check_tier1_direct(url: str, pincode: str) -> dict:
-    """Mock implementation of the fast zero-auth Apple API."""
-    # Note: Extract actual SKU from URL/Page first in real scenario
-    target_url = f"https://www.apple.com/in/shop/retail/pickup-message?parts.0=MOCK_SKU&location={pincode}"
+async def check_pickup_strictly(url: str, pincode: str) -> dict:
+    """
+    Sirf in-store pickup check karega. Delivery status ko ignore karega.
+    Return shape: {"status": "instock" | "oos" | "error", "stores": [...], "message": "..."}
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
     
-    async with _tier1_api_semaphore:
-        # Micro-jitter to prevent Akamai burst detection
-        await asyncio.sleep(random.uniform(0.1, 1.5))
-        
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(target_url)
-            resp.raise_for_status()
-            return resp.json()
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # ---------------------------------------------------------
+        # STEP 1: URL se SKU extract karna (e.g., MG6N4HN/A)
+        # ---------------------------------------------------------
+        sku = None
+        try:
+            resp = await client.get(url, headers=headers)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            
+            # JSON-LD method
+            for script in soup.find_all("script", type="application/ld+json"):
+                try:
+                    data = json.loads(script.string or "")
+                    item = data[0] if isinstance(data, list) else data
+                    sku = item.get("sku")
+                    if not sku and "offers" in item:
+                        offers = item["offers"]
+                        if isinstance(offers, dict):
+                            sku = offers.get("sku")
+                        elif isinstance(offers, list) and len(offers) > 0:
+                            sku = offers[0].get("sku")
+                    if sku: 
+                        break
+                except:
+                    pass
+            
+            # Regex Fallback method
+            if not sku:
+                match = re.search(r'"partNumber"\s*:\s*"([A-Z0-9]{5,14}/[A-Z])"', resp.text)
+                if match:
+                    sku = match.group(1)
 
-async def check_tier2_playwright(url: str, pincode: str) -> dict:
-    """Fallback to Playwright container."""
-    async with _tier2_playwright_semaphore:
-        async with httpx.AsyncClient(timeout=240.0) as client:
-            resp = await client.post(
-                f"{PLAYWRIGHT_SCRAPER_URL}/check-pickup-availability",
-                json={"url": url, "pincode": pincode},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        except Exception as e:
+            logging.error(f"SKU fetch fail hua: {e}")
+            return {"status": "error", "message": "Product page fetch nahi ho paya."}
 
-async def fetch_pickup_availability(url: str, pincode: str) -> bool:
-    """The smart fallback chain."""
-    try:
-        # Try Fast API
-        data = await check_tier1_direct(url, pincode)
-        logger.info(f"[Tier 1] Success for {pincode}")
-        # Parse data here... return True/False based on Apple JSON
-        return True 
-    except Exception as e:
-        logger.warning(f"[Tier 1] Failed for {pincode} ({e}) -> Falling back to Tier 2")
+        if not sku:
+            return {"status": "error", "message": "Is URL se SKU extract nahi ho paya."}
+
+        logging.info(f"Target SKU for {pincode}: {sku}")
+
+        # ---------------------------------------------------------
+        # STEP 2: Strict Apple Pickup API Check (No Delivery Fallback)
+        # ---------------------------------------------------------
+        api_url = "https://www.apple.com/in/shop/retail/pickup-message"
+        params = {
+            "parts.0": sku,
+            "location": pincode
+        }
         
         try:
-            # Try Playwright
-            data = await check_tier2_playwright(url, pincode)
-            logger.info(f"[Tier 2] Success for {pincode}")
-            # Parse data here... return True/False
-            return True
-        except Exception as e_pw:
-            logger.error(f"[Tier 2] Failed for {pincode} ({e_pw})")
-            return False
-
+            api_resp = await client.get(api_url, params=params, headers=headers)
+            if api_resp.status_code != 200:
+                return {"status": "error", "message": f"Apple API ne {api_resp.status_code} diya."}
+            
+            data = api_resp.json()
+            stores = data.get("body", {}).get("stores", [])
+            
+            if not stores:
+                # Agar us pincode ke paas koi Apple store nahi hai
+                return {"status": "oos", "stores": []}
+            
+            available_stores = []
+            for store in stores:
+                part_info = store.get("partsAvailability", {}).get(sku, {})
+                pickup_display = part_info.get("pickupDisplay", "")
+                
+                # Yahan hum STRICTLY check kar rahe hain
+                if pickup_display in ("available", "eligible"):
+                    available_stores.append(store.get("storeName", "Apple Store"))
+            
+            if available_stores:
+                return {"status": "instock", "stores": available_stores}
+            else:
+                return {"status": "oos", "stores": []}
+                
+        except Exception as e:
+            logging.error(f"API Check crash: {e}")
+            return {"status": "error", "message": str(e)}
