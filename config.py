@@ -1,23 +1,8 @@
 import os
-from dataclasses import dataclass
 
-@dataclass
-class Config:
-    # Telegram
-    BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN")
-    CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "TERA_BOT_TOKEN_YAHAN_DAAL")
+PLAYWRIGHT_SCRAPER_URL = os.getenv("PLAYWRIGHT_SCRAPER_URL", "http://localhost:8000")
 
-    # Apple
-    COUNTRY: str = "in"
-    BASE_URL: str = "https://www.apple.com/{country}/shop/retail/pickup-message"
-
-    # Concurrency
-    MAX_CONCURRENT_CHECKS: int = 5
-    TIER1_TIMEOUT: int = 10
-    TIER2_TIMEOUT: int = 60
-
-    # Rate limiting
-    REQUEST_DELAY: float = 0.5  # Seconds between requests
-    RETRY_ATTEMPTS: int = 2
-
-config = Config()
+# Checking Intervals
+CHECK_INTERVAL_SECONDS = int(os.getenv("CHECK_INTERVAL_SECONDS", 180)) 
+STAGGER_INTERVAL_SECONDS = int(os.getenv("STAGGER_INTERVAL_SECONDS", 3)) # Delay between each combo
