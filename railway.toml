@@ -1,5 +1,6 @@
 [build]
-builder = "dockerfile"
+builder = "nixpacks"
 
 [deploy]
-startCommand = "sh -c 'Xvfb :99 -screen 0 1024x768x24 & python bot.py'"
+startCommand = "python main.py"
+restartPolicyType = "on_failure"
