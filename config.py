@@ -1,7 +1,7 @@
 import os
 
 # Tera Bot Token variables se aayega
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8271913562:AAGycnacKhwMTcCrzkAsZhudgb-PhIQwWr4")
 
 # Scraper ka URL seedha hardcode kar diya, ab environment variable ki zaroorat hi nahi!
 PLAYWRIGHT_SCRAPER_URL = "https://loving-liberation-production-52a3.up.railway.app"
